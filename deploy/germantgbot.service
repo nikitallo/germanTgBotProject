@@ -1,0 +1,15 @@
+[Unit]
+Description=German vocabulary Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=REPLACE_WITH_YOUR_LINUX_USER
+WorkingDirectory=REPLACE_WITH_REPO_PATH
+ExecStart=REPLACE_WITH_REPO_PATH/.venv/bin/python -m bot.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

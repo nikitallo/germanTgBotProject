@@ -1,0 +1,10 @@
+{
+  "bot_token": "PUT-YOUR-BOT-TOKEN-HERE",
+  "allowed_user_ids": [123456789],
+  "timezone": "Europe/Berlin",
+  "send_window": {
+    "start_hour": 9,
+    "end_hour": 23
+  },
+  "active_languages": ["de"]
+}
