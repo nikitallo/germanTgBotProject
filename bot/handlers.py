@@ -3,7 +3,12 @@ from telegram import Update
 from telegram.ext import ContextTypes, filters
 
 from bot import quiz
-from bot.scheduler import build_new_word_reply, build_review_quiz_reply
+from bot.scheduler import (
+    commit_new_word,
+    commit_review_quiz,
+    prepare_new_word,
+    prepare_review_quiz,
+)
 from bot.state import StateStore
 
 
@@ -40,20 +45,22 @@ async def word_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     store: StateStore = context.application.bot_data["store"]
     user_id = update.effective_user.id
 
-    text = build_new_word_reply(context.application, user_id)
-    store.save()
-
+    word, text = prepare_new_word(context.application, user_id)
     await update.message.reply_text(text)
+
+    commit_new_word(context.application, user_id, word)
+    store.save()
 
 
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     store: StateStore = context.application.bot_data["store"]
     user_id = update.effective_user.id
 
-    text = build_review_quiz_reply(context.application, user_id)
-    store.save()
-
+    word, text = prepare_review_quiz(context.application, user_id)
     await update.message.reply_text(text)
+
+    commit_review_quiz(context.application, user_id, word)
+    store.save()
 
 
 async def stat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

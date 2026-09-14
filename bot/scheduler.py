@@ -10,6 +10,7 @@ import random
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes
 
 from bot import quiz
@@ -95,11 +96,11 @@ async def daily_reschedule(context: ContextTypes.DEFAULT_TYPE) -> None:
     schedule_all_users(context.application)
 
 
-def build_new_word_reply(application: Application, user_id: int) -> str:
-    """Pick a new word for the user, mark it as introduced, return the reply text.
+def prepare_new_word(application: Application, user_id: int) -> tuple[dict | None, str]:
+    """Pick a new word for the user and build the reply text, without mutating state.
 
-    Mutates state in memory only — caller is responsible for StateStore.save().
-    Shared by the daily scheduled send and the on-demand /word command.
+    Returns (word, text); word is None if the dictionary is exhausted. Call
+    commit_new_word() only after the text was actually delivered.
     """
     store: StateStore = application.bot_data["store"]
     dictionary: list[dict] = application.bot_data["dictionary"]
@@ -109,33 +110,47 @@ def build_new_word_reply(application: Application, user_id: int) -> str:
     word = quiz.pick_new_word(dictionary, introduced)
 
     if word is None:
-        return "🎉 Ты уже выучил все слова из словаря! Новых пока нет."
+        return None, "🎉 Ты уже выучил все слова из словаря! Новых пока нет."
 
-    user_state["introduced_word_ids"].append(word["id"])
-    return f"📚 Новое слово:\n\n{word['term']} — {word['translation']}"
+    return word, f"📚 Новое слово:\n\n{word['term']} — {word['translation']}"
 
 
-def build_review_quiz_reply(application: Application, user_id: int) -> str:
-    """Pick a review word for the user, set pending_quiz, return the reply text.
+def commit_new_word(application: Application, user_id: int, word: dict | None) -> None:
+    """Mark the word as introduced. Call only after the reply was sent successfully."""
+    if word is None:
+        return
+    store: StateStore = application.bot_data["store"]
+    store.get_user(user_id)["introduced_word_ids"].append(word["id"])
 
-    Mutates state in memory only — caller is responsible for StateStore.save().
-    Shared by the daily scheduled send and the on-demand /check command.
+
+def prepare_review_quiz(application: Application, user_id: int) -> tuple[dict | None, str]:
+    """Pick a review word for the user and build the reply text, without mutating state.
+
+    Returns (word, text); word is None if nothing has been introduced yet. Call
+    commit_review_quiz() only after the text was actually delivered.
     """
     store: StateStore = application.bot_data["store"]
     dictionary_by_id: dict[str, dict] = application.bot_data["dictionary_by_id"]
-    tz: ZoneInfo = application.bot_data["tz"]
 
     user_state = store.get_user(user_id)
     word = quiz.pick_review_word(dictionary_by_id, user_state["introduced_word_ids"])
 
     if word is None:
-        return "Пока нечего повторять — сначала получи хотя бы одно новое слово (/word)."
+        return None, "Пока нечего повторять — сначала получи хотя бы одно новое слово (/word)."
 
-    user_state["pending_quiz"] = {
+    return word, f"🔁 Как переводится:\n\n{word['term']}"
+
+
+def commit_review_quiz(application: Application, user_id: int, word: dict | None) -> None:
+    """Set pending_quiz. Call only after the question was sent successfully."""
+    if word is None:
+        return
+    store: StateStore = application.bot_data["store"]
+    tz: ZoneInfo = application.bot_data["tz"]
+    store.get_user(user_id)["pending_quiz"] = {
         "word_id": word["id"],
         "asked_at": datetime.now(tz).isoformat(),
     }
-    return f"🔁 Как переводится:\n\n{word['term']}"
 
 
 async def send_new_word(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -143,11 +158,20 @@ async def send_new_word(context: ContextTypes.DEFAULT_TYPE) -> None:
     application = context.application
     store: StateStore = application.bot_data["store"]
 
-    text = build_new_word_reply(application, user_id)
+    word, text = prepare_new_word(application, user_id)
+    try:
+        await context.bot.send_message(chat_id=user_id, text=text)
+    except TelegramError:
+        logger.warning(
+            "Failed to deliver new word to user %s, will retry on next schedule pass",
+            user_id,
+            exc_info=True,
+        )
+        return
+
+    commit_new_word(application, user_id, word)
     store.get_user(user_id)["today"]["new_word_sent"] = True
     store.save()
-
-    await context.bot.send_message(chat_id=user_id, text=text)
 
 
 async def send_review_quiz(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -155,8 +179,17 @@ async def send_review_quiz(context: ContextTypes.DEFAULT_TYPE) -> None:
     application = context.application
     store: StateStore = application.bot_data["store"]
 
-    text = build_review_quiz_reply(application, user_id)
+    word, text = prepare_review_quiz(application, user_id)
+    try:
+        await context.bot.send_message(chat_id=user_id, text=text)
+    except TelegramError:
+        logger.warning(
+            "Failed to deliver review quiz to user %s, will retry on next schedule pass",
+            user_id,
+            exc_info=True,
+        )
+        return
+
+    commit_review_quiz(application, user_id, word)
     store.get_user(user_id)["today"]["quiz_sent"] = True
     store.save()
-
-    await context.bot.send_message(chat_id=user_id, text=text)
