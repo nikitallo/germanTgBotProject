@@ -8,7 +8,15 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from bot.config import load_settings
 from bot.dictionary import index_by_id, load_dictionary
-from bot.handlers import allowed_filter, handle_text, help_command, start_command
+from bot.handlers import (
+    allowed_filter,
+    check_command,
+    handle_text,
+    help_command,
+    start_command,
+    stat_command,
+    word_command,
+)
 from bot.scheduler import daily_reschedule, schedule_all_users
 from bot.state import StateStore
 
@@ -58,6 +66,9 @@ def main() -> None:
     allowed = allowed_filter(settings.allowed_user_ids)
     application.add_handler(CommandHandler("start", start_command, filters=allowed))
     application.add_handler(CommandHandler("help", help_command, filters=allowed))
+    application.add_handler(CommandHandler("word", word_command, filters=allowed))
+    application.add_handler(CommandHandler("check", check_command, filters=allowed))
+    application.add_handler(CommandHandler("stat", stat_command, filters=allowed))
     application.add_handler(
         MessageHandler(allowed & filters.TEXT & ~filters.COMMAND, handle_text)
     )

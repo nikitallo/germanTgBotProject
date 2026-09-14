@@ -95,22 +95,56 @@ async def daily_reschedule(context: ContextTypes.DEFAULT_TYPE) -> None:
     schedule_all_users(context.application)
 
 
-async def send_new_word(context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = context.job.user_id
-    store: StateStore = context.application.bot_data["store"]
-    dictionary: list[dict] = context.application.bot_data["dictionary"]
+def build_new_word_reply(application: Application, user_id: int) -> str:
+    """Pick a new word for the user, mark it as introduced, return the reply text.
+
+    Mutates state in memory only — caller is responsible for StateStore.save().
+    Shared by the daily scheduled send and the on-demand /word command.
+    """
+    store: StateStore = application.bot_data["store"]
+    dictionary: list[dict] = application.bot_data["dictionary"]
 
     user_state = store.get_user(user_id)
     introduced = set(user_state["introduced_word_ids"])
     word = quiz.pick_new_word(dictionary, introduced)
 
     if word is None:
-        text = "🎉 Ты уже выучил все слова из словаря! Новых пока нет."
-    else:
-        user_state["introduced_word_ids"].append(word["id"])
-        text = f"📚 Новое слово дня:\n\n{word['term']} — {word['translation']}"
+        return "🎉 Ты уже выучил все слова из словаря! Новых пока нет."
 
-    user_state["today"]["new_word_sent"] = True
+    user_state["introduced_word_ids"].append(word["id"])
+    return f"📚 Новое слово:\n\n{word['term']} — {word['translation']}"
+
+
+def build_review_quiz_reply(application: Application, user_id: int) -> str:
+    """Pick a review word for the user, set pending_quiz, return the reply text.
+
+    Mutates state in memory only — caller is responsible for StateStore.save().
+    Shared by the daily scheduled send and the on-demand /check command.
+    """
+    store: StateStore = application.bot_data["store"]
+    dictionary_by_id: dict[str, dict] = application.bot_data["dictionary_by_id"]
+    tz: ZoneInfo = application.bot_data["tz"]
+
+    user_state = store.get_user(user_id)
+    word = quiz.pick_review_word(dictionary_by_id, user_state["introduced_word_ids"])
+
+    if word is None:
+        return "Пока нечего повторять — сначала получи хотя бы одно новое слово (/word)."
+
+    user_state["pending_quiz"] = {
+        "word_id": word["id"],
+        "asked_at": datetime.now(tz).isoformat(),
+    }
+    return f"🔁 Как переводится:\n\n{word['term']}"
+
+
+async def send_new_word(context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = context.job.user_id
+    application = context.application
+    store: StateStore = application.bot_data["store"]
+
+    text = build_new_word_reply(application, user_id)
+    store.get_user(user_id)["today"]["new_word_sent"] = True
     store.save()
 
     await context.bot.send_message(chat_id=user_id, text=text)
@@ -118,23 +152,11 @@ async def send_new_word(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def send_review_quiz(context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = context.job.user_id
-    store: StateStore = context.application.bot_data["store"]
-    dictionary_by_id: dict[str, dict] = context.application.bot_data["dictionary_by_id"]
+    application = context.application
+    store: StateStore = application.bot_data["store"]
 
-    user_state = store.get_user(user_id)
-    word = quiz.pick_review_word(dictionary_by_id, user_state["introduced_word_ids"])
-
-    if word is None:
-        text = "Пока нечего повторять — дождись первого нового слова 🙂"
-    else:
-        tz: ZoneInfo = context.application.bot_data["tz"]
-        user_state["pending_quiz"] = {
-            "word_id": word["id"],
-            "asked_at": datetime.now(tz).isoformat(),
-        }
-        text = f"🔁 Как переводится:\n\n{word['term']}"
-
-    user_state["today"]["quiz_sent"] = True
+    text = build_review_quiz_reply(application, user_id)
+    store.get_user(user_id)["today"]["quiz_sent"] = True
     store.save()
 
     await context.bot.send_message(chat_id=user_id, text=text)

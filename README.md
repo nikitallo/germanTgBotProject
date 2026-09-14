@@ -5,6 +5,13 @@ and once a day it quizzes you on a word you've already seen (reply with the
 translation and the bot tells you if you got it right). It only responds to a
 predefined list of Telegram user IDs.
 
+## Get the code
+
+```bash
+git clone https://github.com/nikitallo/germanTgBotProject.git
+cd germanTgBotProject
+```
+
 ## Setup
 
 ```bash
@@ -28,6 +35,9 @@ Fill in `settings.json`:
 - `send_window` — hours (`start_hour`/`end_hour`) within which a random time
   is picked each day for the new word, and separately for the review quiz.
 - `active_languages` — which dictionary languages to use (see below).
+
+`settings.json` is gitignored — it holds your bot token and user IDs and is
+never committed or pulled from the repo.
 
 ## Dictionary
 
@@ -55,6 +65,18 @@ The script is safe to rerun: already-added words are never duplicated.
 No bot code changes are needed — words from every language listed in
 `active_languages` are used equally for new-word sends and reviews.
 
+## Bot commands
+
+- `/word` — get a new word right now (also counts as introduced, same as the
+  automatic daily send).
+- `/check` — get a review quiz right now, picked from words you've already
+  seen; reply with the translation to have it graded. If you haven't been
+  sent any words yet, the bot tells you so instead of asking a question.
+- `/stat` — your progress: how many words have been sent out of the total
+  dictionary size, how many remain, and your quiz answer tally.
+- `/help` — lists all commands and explains the daily flow.
+- `/start` — greets you and confirms the bot can see you.
+
 ## Running
 
 ```bash
@@ -63,13 +85,22 @@ python -m bot.main
 
 ## Deploying on a VPS as a systemd service
 
-1. Copy the project to the server, install dependencies, and set up
-   `settings.json` and the dictionary as described above.
+1. On the server: install prerequisites, clone the repo, and follow **Setup**,
+   **Configuration**, and **Dictionary** above.
+   ```bash
+   sudo apt update && sudo apt install -y git python3-venv python3-pip
+   git clone https://github.com/nikitallo/germanTgBotProject.git
+   cd germanTgBotProject
+   ```
 2. Edit `deploy/germantgbot.service`, replacing `REPLACE_WITH_YOUR_LINUX_USER`
-   and `REPLACE_WITH_REPO_PATH` with real values.
+   and `REPLACE_WITH_REPO_PATH` with real values (or generate it in one go):
+   ```bash
+   sed -e "s#REPLACE_WITH_YOUR_LINUX_USER#$(whoami)#g" \
+       -e "s#REPLACE_WITH_REPO_PATH#$(pwd)#g" \
+       deploy/germantgbot.service | sudo tee /etc/systemd/system/germantgbot.service
+   ```
 3. Install and enable the service:
    ```bash
-   sudo cp deploy/germantgbot.service /etc/systemd/system/germantgbot.service
    sudo systemctl daemon-reload
    sudo systemctl enable --now germantgbot
    ```
@@ -79,6 +110,17 @@ python -m bot.main
    journalctl -u germantgbot -f
    ```
 
+### Updating after a fix
+
+`settings.json`, `data/dictionary.json`, and `data/state.json` are gitignored,
+so pulling never touches your token, dictionary, or progress:
+
+```bash
+cd germanTgBotProject
+git pull
+sudo systemctl restart germantgbot
+```
+
 ## Project layout
 
 ```
@@ -87,7 +129,7 @@ bot/                 # bot source code
   dictionary.py        # dictionary loader
   state.py              # per-user progress storage (data/state.json)
   quiz.py                # word selection and answer checking
-  scheduler.py             # daily random send schedule
+  scheduler.py             # daily random send schedule + on-demand replies
   handlers.py               # commands, message handling, access control
   main.py                    # entry point
 scripts/
